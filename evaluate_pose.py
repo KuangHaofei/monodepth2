@@ -61,8 +61,10 @@ def evaluate(opt):
         os.path.join(os.path.dirname(__file__), "splits", "odom",
                      "test_files_{:02d}.txt".format(sequence_id)))
 
+    img_ext = '.png' if opt.png else '.jpg'
+
     dataset = KITTIOdomDataset(opt.data_path, filenames, opt.height, opt.width,
-                               [0, 1], 4, is_train=False)
+                               [0, 1], 4, is_train=False, img_ext=img_ext)
     dataloader = DataLoader(dataset, opt.batch_size, shuffle=False,
                             num_workers=opt.num_workers, pin_memory=True, drop_last=False)
 
