@@ -30,6 +30,12 @@ class OmniDataset(MonoDataset):
 
         return color
 
+    def check_depth(self):
+        pass
+
+    def get_depth(self, folder, frame_index, side, do_flip):
+        pass
+
 
 class OmniUnderWater(OmniDataset):
     def __init__(self, *args, **kwargs):
