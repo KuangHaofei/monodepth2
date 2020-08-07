@@ -168,6 +168,82 @@ class BackprojectDepth(nn.Module):
         return cam_points
 
 
+class BackprojectOmniDepth(nn.Module):
+    """Layer to transform a depth image into a point cloud for the omni-camera model
+    """
+    def __init__(self, batch_size, height, width):
+        super(BackprojectOmniDepth, self).__init__()
+
+        self.batch_size = batch_size
+        self.height = height
+        self.width = width
+
+        meshgrid = np.meshgrid(range(self.width), range(self.height), indexing='xy')
+        self.id_coords = np.stack(meshgrid, axis=0).astype(np.float32)
+        self.id_coords = nn.Parameter(torch.from_numpy(self.id_coords),
+                                      requires_grad=False)
+
+        self.ones = nn.Parameter(torch.ones(self.batch_size, 1, self.height * self.width),
+                                 requires_grad=False)
+
+        self.pix_coords = torch.unsqueeze(torch.stack(
+            [self.id_coords[0].view(-1), self.id_coords[1].view(-1)], 0), 0)
+        self.pix_coords = self.pix_coords.repeat(batch_size, 1, 1)
+        self.pix_coords = nn.Parameter(torch.cat([self.pix_coords, self.ones], 1),
+                                       requires_grad=False)
+
+    def forward(self, depth, inv_K):
+        u = self.pix_coords[:, 0, :]
+        v = self.pix_coords[:, 1, :]
+        r = torch.sqrt(u ** 2 + (0.5 * self.height - v) ** 2)
+
+        theta = np.pi / 2 - v / self.height * np.pi
+        phi = u / self.width * 2 * np.pi
+
+        cam_z = torch.unsqueeze(r * torch.cos(theta), 1)
+        cam_x = torch.unsqueeze(r * torch.cos(theta) * torch.cos(phi), 1)
+        cam_y = torch.unsqueeze(r * torch.cos(theta) * torch.sin(phi), 1)
+
+        cam_points = torch.cat([cam_x, cam_y, cam_z], dim=1)
+        cam_points = depth.view(self.batch_size, 1, -1) * cam_points
+        cam_points = torch.cat([cam_points, self.ones], 1)
+
+        return cam_points
+
+
+class ProjectOmni3D(nn.Module):
+    """Layer which projects 3D points into a camera with intrinsics K and at position T
+    """
+    def __init__(self, batch_size, height, width, eps=1e-7):
+        super(ProjectOmni3D, self).__init__()
+
+        self.batch_size = batch_size
+        self.height = height
+        self.width = width
+        self.eps = eps
+
+    def forward(self, points, K, T):
+        cam_x = points[:, 0, :]
+        cam_y = points[:, 1, :]
+        cam_z = points[:, 2, :]
+
+        phi = torch.atan2(cam_y, cam_x)
+        phi[phi < 0] += 2 * np.pi
+        theta = np.pi - torch.atan2(cam_z, torch.sqrt(cam_x ** 2 + cam_y ** 2))
+
+        u = torch.unsqueeze(phi / (2 * np.pi) * self.width, 1)
+        v = torch.unsqueeze(theta / np.pi * self.height, 1)
+        pix_coords = torch.cat([u, v], dim=1)
+
+        pix_coords = pix_coords.view(self.batch_size, 2, self.height, self.width)
+        pix_coords = pix_coords.permute(0, 2, 3, 1)
+        pix_coords[..., 0] /= self.width - 1
+        pix_coords[..., 1] /= self.height - 1
+        pix_coords = (pix_coords - 0.5) * 2
+
+        return pix_coords
+
+
 class Project3D(nn.Module):
     """Layer which projects 3D points into a camera with intrinsics K and at position T
     """
