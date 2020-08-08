@@ -330,8 +330,7 @@ omni_uw 16310 l
 omni_uw 16620 l 
 omni_uw 22060 l 
 omni_uw 25940 l 
-omni_uw 28880 l 
-omni_uw 27240 l 
+omni_uw 27240 l
 omni_uw 12890 l 
 omni_uw 13180 l 
 omni_uw 12860 l 
@@ -348,8 +347,7 @@ omni_uw 14500 l
 omni_uw 14320 l 
 omni_uw 23360 l 
 omni_uw 11080 l 
-omni_uw 10000 l 
-omni_uw 22700 l 
+omni_uw 22700 l
 omni_uw 23390 l 
 omni_uw 12530 l 
 omni_uw 23380 l 
