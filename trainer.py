@@ -484,11 +484,12 @@ class Trainer:
 
             loss += to_optimise.mean()
 
-            mean_disp = disp.mean(2, True).mean(3, True)
-            norm_disp = disp / (mean_disp + 1e-7)
-            smooth_loss = get_smooth_loss(norm_disp, color)
+            # mean_disp = disp.mean(2, True).mean(3, True)
+            # norm_disp = disp / (mean_disp + 1e-7)
+            # smooth_loss = get_smooth_loss(norm_disp, color)
+            #
+            # loss += self.opt.disparity_smoothness * smooth_loss / (2 ** scale)
 
-            loss += self.opt.disparity_smoothness * smooth_loss / (2 ** scale)
             total_loss += loss
             losses["loss/{}".format(scale)] = loss
 
