@@ -248,6 +248,10 @@ class SSIM(nn.Module):
         return torch.clamp((1 - SSIM_n / SSIM_d) / 2, 0, 1)
 
 
+def calculate_NCE_loss(self, src, tgt):
+    pass
+
+
 def compute_depth_errors(gt, pred):
     """Computation of error metrics between predicted and ground truth depths
     """
