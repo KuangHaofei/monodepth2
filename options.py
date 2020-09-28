@@ -101,6 +101,30 @@ class MonodepthOptions:
                                  help="step size of the scheduler",
                                  default=15)
 
+        # PATCHNCE LOSS options
+        self.parser.add_argument('--patchnce', action="store_true",
+                                 help='use NCE loss')
+        self.parser.add_argument('--beta1', type=float, default=0.5,
+                                 help='momentum term of adam')
+        self.parser.add_argument('--beta2', type=float, default=0.999,
+                                 help='momentum term of adam')
+        self.parser.add_argument('--lr', type=float, default=0.0002,
+                                 help='initial learning rate for adam')
+        self.parser.add_argument('--lambda_NCE', type=float, default=1.0,
+                                 help='weight for NCE loss: NCE(G(X), X)')
+        self.parser.add_argument('--nce_idt', action="store_true",
+                                 help='use NCE loss for identity mapping: NCE(G(Y), Y))')
+        self.parser.add_argument('--nce_includes_all_negatives_from_minibatch', action="store_true",
+                                 help='(used for single image translation) If True, include '
+                                      'the negatives from the other samples of the minibatch '
+                                      'when computing the contrastive loss. '
+                                      'Please see models/patchnce.py for more details.')
+        self.parser.add_argument('--nce_T', type=float, default=0.07,
+                                 help='temperature for NCE loss')
+        self.parser.add_argument('--num_patches', type=int, default=256,
+                                 help='number of patches per layer')
+
+
         # ABLATION options
         self.parser.add_argument("--v1_multiscale",
                                  help="if set, uses monodepth v1 multiscale",

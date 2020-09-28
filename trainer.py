@@ -20,6 +20,7 @@ import json
 from utils import *
 from kitti_utils import *
 from layers import *
+from patchnce import PatchNCELoss
 
 import datasets
 import networks
@@ -109,6 +110,25 @@ class Trainer:
         print("Training model named:\n  ", self.opt.model_name)
         print("Models and tensorboard events files are saved to:\n  ", self.opt.log_dir)
         print("Training is using:\n  ", self.device)
+
+        # Contrastive Learning
+        if self.opt.patchnce:
+            use_mlp = True
+            init_type = 'normal'
+            init_gain = 0.02
+            gpu_ids = [0]
+            nc = 256
+            self.patchSampler = PatchSampleF(
+                use_mlp=use_mlp, init_type=init_type, init_gain=init_gain,
+                gpu_ids=gpu_ids, nc=nc)
+
+            self.criterionNCE = []
+            ## TODO: multi-layer patchNCE
+            self.criterionNCE.append(PatchNCELoss(self.opt).to(self.device))
+
+            self.optimizer_F = torch.optim.Adam(
+                self.patchSampler.parameters(), lr=self.opt.lr,
+                betas=(self.opt.beta1, self.opt.beta2))
 
         # data
         datasets_dict = {"kitti": datasets.KITTIRAWDataset,
@@ -207,6 +227,10 @@ class Trainer:
             self.model_optimizer.zero_grad()
             losses["loss"].backward()
             self.model_optimizer.step()
+
+            # optimize mlp while using NCE loss
+            if self.opt.patchnce:
+                self.optimizer_F.step()
 
             duration = time.time() - before_op_time
 
@@ -404,6 +428,26 @@ class Trainer:
 
         return reprojection_loss
 
+    def calculate_NCE_loss(self, src, tgt):
+        ## TODO: multi-layer PatchNCE
+        n_layers = None
+
+        # PatchNCE for depth model
+        feat_q = self.models["encoder"](tgt)[-1]
+        feat_k = self.models["encoder"](src)[-1]
+
+        feat_k_pool, sample_ids = self.patchSampler(feat_k, self.opt.num_patches, None)
+        feat_q_pool, _ = self.patchSampler(feat_q, self.opt.num_patches, sample_ids)
+
+        # TODO: PatchNCE for pose model
+
+        total_nce_loss = 0.0
+        for f_q, f_k, crit in zip(feat_q_pool, feat_k_pool, self.criterionNCE):
+            loss = crit(f_q, f_k) * self.opt.lambda_NCE
+            total_nce_loss += loss.mean()
+
+        return total_nce_loss
+
     def compute_losses(self, inputs, outputs):
         """Compute the reprojection and smoothness losses for a minibatch
         """
@@ -488,6 +532,26 @@ class Trainer:
             smooth_loss = get_smooth_loss(norm_disp, color)
 
             loss += self.opt.disparity_smoothness * smooth_loss / (2 ** scale)
+
+            # PatchNCE Loss
+            # test with stereo mode
+            real_A = inputs[("color", 0, source_scale)]
+            real_B = inputs["color", "s", source_scale]
+            fake_A = outputs["color", "s", scale]
+
+            if self.opt.lambda_NCE > 0.0:
+                loss_NCE = self.calculate_NCE_loss(real_A, fake_A)
+            else:
+                loss_NCE = 0.0, 0.0
+
+            if self.opt.nce_idt and self.opt.lambda_NCE > 0.0:
+                loss_NCE_Y = self.calculate_NCE_loss(self.real_B, self.idt_B)
+                loss_NCE_both = (loss_NCE + loss_NCE_Y) * 0.5
+            else:
+                loss_NCE_both = loss_NCE
+
+            loss += loss_NCE_both
+
             total_loss += loss
             losses["loss/{}".format(scale)] = loss
 
