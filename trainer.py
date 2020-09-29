@@ -221,7 +221,7 @@ class Trainer:
             before_op_time = time.time()
 
             # initialize PatchSampler is depend on input data
-            if self.opt.patchnce and self.epoch == 0:
+            if self.opt.patchnce and self.epoch == 0 and batch_idx == 0:
                 self.data_dependent_initialize(inputs)
 
             outputs, losses = self.process_batch(inputs)
