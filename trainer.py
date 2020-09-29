@@ -125,9 +125,10 @@ class Trainer:
             self.patchSampler = init_net(self.patchSampler, init_type, init_gain, gpu_ids)
 
             # NCE Loss
+            self.nce_layers = [int(i) for i in self.opt.nce_layers.split(',')]
             self.criterionNCE = []
-            ## TODO: multi-layer patchNCE
-            self.criterionNCE.append(PatchNCELoss(self.opt).to(self.device))
+            for nce_layer in self.nce_layers:
+                self.criterionNCE.append(PatchNCELoss(self.opt).to(self.device))
 
         # data
         datasets_dict = {"kitti": datasets.KITTIRAWDataset,
@@ -440,12 +441,12 @@ class Trainer:
         return reprojection_loss
 
     def calculate_NCE_loss(self, src, tgt):
-        ## TODO: multi-layer PatchNCE
-        n_layers = None
+        n_layers = len(self.nce_layers)
 
         # PatchNCE for depth model
-        feat_q = self.models["encoder"](tgt)[-1:]
-        feat_k = self.models["encoder"](src)[-1:]
+        # 5 layers
+        feat_q = self.models["encoder"](tgt)
+        feat_k = self.models["encoder"](src)
 
         feat_k_pool, sample_ids = self.patchSampler(feat_k, self.opt.num_patches, None)
         feat_q_pool, _ = self.patchSampler(feat_q, self.opt.num_patches, sample_ids)
@@ -453,11 +454,12 @@ class Trainer:
         # TODO: PatchNCE for pose model
 
         total_nce_loss = 0.0
-        for f_q, f_k, crit in zip(feat_q_pool, feat_k_pool, self.criterionNCE):
+        for f_q, f_k, crit, nce_layer in \
+                zip(feat_q_pool, feat_k_pool,self.criterionNCE, self.nce_layers):
             loss = crit(f_q, f_k) * self.opt.lambda_NCE
             total_nce_loss += loss.mean()
 
-        return total_nce_loss
+        return total_nce_loss / n_layers
 
     def compute_losses(self, inputs, outputs):
         """Compute the reprojection and smoothness losses for a minibatch
@@ -556,6 +558,7 @@ class Trainer:
                 else:
                     loss_NCE = 0.0, 0.0
 
+                ## TODO: identity loss
                 if self.opt.nce_idt and self.opt.lambda_NCE > 0.0:
                     loss_NCE_Y = self.calculate_NCE_loss(self.real_B, self.idt_B)
                     loss_NCE_both = (loss_NCE + loss_NCE_Y) * 0.5

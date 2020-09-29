@@ -112,6 +112,8 @@ class MonodepthOptions:
                                  help='initial learning rate for adam')
         self.parser.add_argument('--lambda_NCE', type=float, default=1.0,
                                  help='weight for NCE loss: NCE(G(X), X)')
+        self.parser.add_argument('--nce_layers', type=str, default='0,1,2,3,4',
+                                 help='compute NCE loss on which layers')
         self.parser.add_argument('--nce_idt', action="store_true",
                                  help='use NCE loss for identity mapping: NCE(G(Y), Y))')
         self.parser.add_argument('--nce_includes_all_negatives_from_minibatch', action="store_true",
