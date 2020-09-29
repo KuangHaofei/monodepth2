@@ -113,6 +113,7 @@ class Trainer:
 
         # Contrastive Learning
         if self.opt.patchnce:
+            # PatchSampler
             use_mlp = True
             init_type = 'normal'
             init_gain = 0.02
@@ -121,14 +122,12 @@ class Trainer:
             self.patchSampler = PatchSampleF(
                 use_mlp=use_mlp, init_type=init_type, init_gain=init_gain,
                 gpu_ids=gpu_ids, nc=nc)
+            self.patchSampler = init_net(self.patchSampler, init_type, init_gain, gpu_ids)
 
+            # NCE Loss
             self.criterionNCE = []
             ## TODO: multi-layer patchNCE
             self.criterionNCE.append(PatchNCELoss(self.opt).to(self.device))
-
-            self.optimizer_F = torch.optim.Adam(
-                self.patchSampler.parameters(), lr=self.opt.lr,
-                betas=(self.opt.beta1, self.opt.beta2))
 
         # data
         datasets_dict = {"kitti": datasets.KITTIRAWDataset,
@@ -207,20 +206,23 @@ class Trainer:
         self.start_time = time.time()
         for self.epoch in range(self.opt.num_epochs):
             self.run_epoch()
+            self.model_lr_scheduler.step()
             if (self.epoch + 1) % self.opt.save_frequency == 0:
                 self.save_model()
 
     def run_epoch(self):
         """Run a single epoch of training and validation
         """
-        self.model_lr_scheduler.step()
-
         print("Training")
         self.set_train()
 
         for batch_idx, inputs in enumerate(self.train_loader):
 
             before_op_time = time.time()
+
+            # initialize PatchSampler is depend on input data
+            if self.opt.patchnce and self.epoch == 0:
+                self.data_dependent_initialize(inputs)
 
             outputs, losses = self.process_batch(inputs)
 
@@ -248,6 +250,15 @@ class Trainer:
                 self.val()
 
             self.step += 1
+
+    def data_dependent_initialize(self, inputs):
+        outputs, losses = self.process_batch(inputs)
+        losses["loss"].backward()
+
+        if self.opt.lambda_NCE > 0.0:
+            self.optimizer_F = torch.optim.Adam(
+                self.patchSampler.parameters(), lr=self.opt.lr,
+                betas=(self.opt.beta1, self.opt.beta2))
 
     def process_batch(self, inputs):
         """Pass a minibatch through the network and generate images and losses
@@ -433,8 +444,8 @@ class Trainer:
         n_layers = None
 
         # PatchNCE for depth model
-        feat_q = self.models["encoder"](tgt)[-1]
-        feat_k = self.models["encoder"](src)[-1]
+        feat_q = self.models["encoder"](tgt)[-1:]
+        feat_k = self.models["encoder"](src)[-1:]
 
         feat_k_pool, sample_ids = self.patchSampler(feat_k, self.opt.num_patches, None)
         feat_q_pool, _ = self.patchSampler(feat_q, self.opt.num_patches, sample_ids)
@@ -535,22 +546,23 @@ class Trainer:
 
             # PatchNCE Loss
             # test with stereo mode
-            real_A = inputs[("color", 0, source_scale)]
-            real_B = inputs["color", "s", source_scale]
-            fake_A = outputs["color", "s", scale]
+            if self.opt.patchnce:
+                real_A = inputs[("color", 0, source_scale)]
+                real_B = inputs["color", "s", source_scale]
+                fake_A = outputs["color", "s", scale]
 
-            if self.opt.lambda_NCE > 0.0:
-                loss_NCE = self.calculate_NCE_loss(real_A, fake_A)
-            else:
-                loss_NCE = 0.0, 0.0
+                if self.opt.lambda_NCE > 0.0:
+                    loss_NCE = self.calculate_NCE_loss(real_A, fake_A)
+                else:
+                    loss_NCE = 0.0, 0.0
 
-            if self.opt.nce_idt and self.opt.lambda_NCE > 0.0:
-                loss_NCE_Y = self.calculate_NCE_loss(self.real_B, self.idt_B)
-                loss_NCE_both = (loss_NCE + loss_NCE_Y) * 0.5
-            else:
-                loss_NCE_both = loss_NCE
+                if self.opt.nce_idt and self.opt.lambda_NCE > 0.0:
+                    loss_NCE_Y = self.calculate_NCE_loss(self.real_B, self.idt_B)
+                    loss_NCE_both = (loss_NCE + loss_NCE_Y) * 0.5
+                else:
+                    loss_NCE_both = loss_NCE
 
-            loss += loss_NCE_both
+                loss += loss_NCE_both
 
             total_loss += loss
             losses["loss/{}".format(scale)] = loss

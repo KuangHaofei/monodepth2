@@ -351,19 +351,19 @@ def init_weights(net, init_type='normal', init_gain=0.02, debug=False):
             if init_type == 'normal':
                 torch.nn.init.normal_(m.weight.data, 0.0, init_gain)
             elif init_type == 'xavier':
-                torch.nn.initinit.xavier_normal_(m.weight.data, gain=init_gain)
+                torch.nn.init.xavier_normal_(m.weight.data, gain=init_gain)
             elif init_type == 'kaiming':
-                torch.nn.initinit.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
+                torch.nn.init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
             elif init_type == 'orthogonal':
-                torch.nn.initinit.orthogonal_(m.weight.data, gain=init_gain)
+                torch.nn.init.orthogonal_(m.weight.data, gain=init_gain)
             else:
                 raise NotImplementedError('initialization method [%s] is not implemented' % init_type)
             if hasattr(m, 'bias') and m.bias is not None:
-                torch.nn.initinit.constant_(m.bias.data, 0.0)
+                torch.nn.init.constant_(m.bias.data, 0.0)
         elif classname.find('BatchNorm2d') != -1:
             # BatchNorm Layer's weight is not a matrix; only normal distribution applies.
-            torch.nn.initinit.normal_(m.weight.data, 1.0, init_gain)
-            torch.nn.initinit.constant_(m.bias.data, 0.0)
+            torch.nn.init.normal_(m.weight.data, 1.0, init_gain)
+            torch.nn.init.constant_(m.bias.data, 0.0)
 
     net.apply(init_func)  # apply the initialization function <init_func>
 
