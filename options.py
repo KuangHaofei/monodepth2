@@ -108,8 +108,17 @@ class MonodepthOptions:
                                  help='momentum term of adam')
         self.parser.add_argument('--beta2', type=float, default=0.999,
                                  help='momentum term of adam')
-        self.parser.add_argument('--lr', type=float, default=0.0002,
+        self.parser.add_argument('--lr', type=float, default=0.0001,
                                  help='initial learning rate for adam')
+        self.parser.add_argument('--lr_policy', type=str, default='linear',
+                                 help='learning rate policy. [linear | step | plateau | cosine]')
+        self.parser.add_argument('--lr_decay_iters', type=int, default=50,
+                                 help='multiply by a gamma every lr_decay_iters iterations')
+        self.parser.add_argument('--epoch_count', type=int, default=1,
+                                 help='the starting epoch count, we save the model by '
+                                      '<epoch_count>, <epoch_count>+<save_latest_freq>, ...')
+        self.parser.add_argument('--n_epochs_decay', type=int, default=200,
+                                 help='number of epochs to linearly decay learning rate to zero')
         self.parser.add_argument('--lambda_NCE', type=float, default=1.0,
                                  help='weight for NCE loss: NCE(G(X), X)')
         self.parser.add_argument('--nce_layers', type=str, default='0,1,2,3,4',

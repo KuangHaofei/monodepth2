@@ -38,6 +38,8 @@ class Trainer:
 
         self.models = {}
         self.parameters_to_train = []
+        self.optimizers = []
+        self.metric = 0  # used for learning rate policy 'plateau'
 
         self.device = torch.device("cpu" if self.opt.no_cuda else "cuda")
 
@@ -103,6 +105,8 @@ class Trainer:
         self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate)
         self.model_lr_scheduler = optim.lr_scheduler.StepLR(
             self.model_optimizer, self.opt.scheduler_step_size, 0.1)
+
+        self.optimizers.append(self.model_optimizer)
 
         if self.opt.load_weights_folder is not None:
             self.load_model()
@@ -207,7 +211,11 @@ class Trainer:
         self.start_time = time.time()
         for self.epoch in range(self.opt.num_epochs):
             self.run_epoch()
-            self.model_lr_scheduler.step()
+
+            if self.opt.patchnce:
+                self.update_learning_rate()
+            else:
+                self.model_lr_scheduler.step()
             if (self.epoch + 1) % self.opt.save_frequency == 0:
                 self.save_model()
 
@@ -260,6 +268,49 @@ class Trainer:
             self.optimizer_F = torch.optim.Adam(
                 self.patchSampler.parameters(), lr=self.opt.lr,
                 betas=(self.opt.beta1, self.opt.beta2))
+            self.optimizers.append(self.optimizer_F)
+
+        self.schedulers = [self.get_scheduler(optimizer) for optimizer in self.optimizers]
+
+    def get_scheduler(self, optimizer):
+        """Return a learning rate scheduler
+
+        Parameters:
+            optimizer          -- the optimizer of the network
+            opt (option class) -- stores all the experiment flags; needs to be a subclass of BaseOptions．　
+                                  opt.lr_policy is the name of learning rate policy: linear | step | plateau | cosine
+
+        For 'linear', we keep the same learning rate for the first <opt.n_epochs> epochs
+        and linearly decay the rate to zero over the next <opt.n_epochs_decay> epochs.
+        For other schedulers (step, plateau, and cosine), we use the default PyTorch schedulers.
+        See https://pytorch.org/docs/stable/optim.html for more details.
+        """
+        if self.opt.lr_policy == 'linear':
+            def lambda_rule(epoch):
+                lr_l = 1.0 - max(0, epoch + self.opt.epoch_count - self.opt.num_epochs) \
+                       / float(self.opt.n_epochs_decay + 1)
+                return lr_l
+            scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda_rule)
+        elif self.opt.lr_policy == 'step':
+            scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=self.opt.lr_decay_iters, gamma=0.1)
+        elif self.opt.lr_policy == 'plateau':
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, threshold=0.01, patience=5)
+        elif self.opt.lr_policy == 'cosine':
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.opt.num_epochs, eta_min=0)
+        else:
+            return NotImplementedError('learning rate policy [%s] is not implemented', self.opt.lr_policy)
+        return scheduler
+
+    def update_learning_rate(self):
+        """Update learning rates for all the networks; called at the end of every epoch"""
+        for scheduler in self.schedulers:
+            if self.opt.lr_policy == 'plateau':
+                scheduler.step(self.metric)
+            else:
+                scheduler.step()
+
+        lr = self.optimizers[0].param_groups[0]['lr']
+        print('learning rate = %.7f' % lr)
 
     def process_batch(self, inputs):
         """Pass a minibatch through the network and generate images and losses
