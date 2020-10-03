@@ -278,7 +278,8 @@ class Trainer:
         Parameters:
             optimizer          -- the optimizer of the network
             opt (option class) -- stores all the experiment flags; needs to be a subclass of BaseOptions．　
-                                  opt.lr_policy is the name of learning rate policy: linear | step | plateau | cosine
+                                  opt.lr_policy is the name of learning rate policy:
+                                  linear | step | plateau | cosine
 
         For 'linear', we keep the same learning rate for the first <opt.n_epochs> epochs
         and linearly decay the rate to zero over the next <opt.n_epochs_decay> epochs.
@@ -292,13 +293,17 @@ class Trainer:
                 return lr_l
             scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda_rule)
         elif self.opt.lr_policy == 'step':
-            scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=self.opt.lr_decay_iters, gamma=0.1)
+            scheduler = optim.lr_scheduler.StepLR(
+                optimizer, step_size=self.opt.lr_decay_iters, gamma=0.1)
         elif self.opt.lr_policy == 'plateau':
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, threshold=0.01, patience=5)
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='min', factor=0.2, threshold=0.01, patience=5)
         elif self.opt.lr_policy == 'cosine':
-            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.opt.num_epochs, eta_min=0)
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=self.opt.num_epochs, eta_min=0)
         else:
-            return NotImplementedError('learning rate policy [%s] is not implemented', self.opt.lr_policy)
+            return NotImplementedError(
+                'learning rate policy [%s] is not implemented', self.opt.lr_policy)
         return scheduler
 
     def update_learning_rate(self):
@@ -334,6 +339,14 @@ class Trainer:
             # Otherwise, we only feed the image with frame_id 0 through the depth encoder
             features = self.models["encoder"](inputs["color_aug", 0, 0])
             outputs = self.models["depth"](features)
+
+            if self.opt.nce_idt:
+                for i, f_i in enumerate(self.opt.frame_ids[1:]):
+                    features = self.models["encoder"](inputs["color_aug", f_i, 0])
+                    outputs_fi = self.models["depth"](features)
+                    for i in range(4, -1, -1):
+                        if i in self.opt.scales:
+                            outputs[("disp", f_i, i)] = outputs_fi[("disp", i)]
 
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features)
@@ -380,6 +393,14 @@ class Trainer:
                     # Invert the matrix if the frame id is negative
                     outputs[("cam_T_cam", 0, f_i)] = transformation_from_parameters(
                         axisangle[:, 0], translation[:, 0], invert=(f_i < 0))
+
+                    # Identity PatchNCE Loss need inverse transformation
+                    if self.opt.nce_idt:
+                        outputs[("cam_T_cam", f_i, 0)] = \
+                            torch.inverse(outputs[("cam_T_cam", 0, f_i)])
+                        # outputs[("cam_T_cam", f_i, 0)] = \
+                        #     transformation_from_parameters(
+                        #         axisangle[:, 0], translation[:, 0], invert=((-f_i) < 0))
 
         else:
             # Here we input all frames to the pose net (and predict all poses) together
@@ -476,6 +497,38 @@ class Trainer:
                 if not self.opt.disable_automasking:
                     outputs[("color_identity", frame_id, scale)] = \
                         inputs[("color", frame_id, source_scale)]
+
+            # use identity patchnce loss need generate fake target images from source image
+            if self.opt.nce_idt:
+                for i, frame_id in enumerate(self.opt.frame_ids[1:]):
+                    disp = outputs[("disp", frame_id, scale)]
+                    if self.opt.v1_multiscale:
+                        source_scale = scale
+                    else:
+                        disp = F.interpolate(
+                            disp, [self.opt.height, self.opt.width], mode="bilinear", align_corners=False)
+                        source_scale = 0
+
+                    _, depth = disp_to_depth(disp, self.opt.min_depth, self.opt.max_depth)
+
+                    outputs[("depth", frame_id, scale)] = depth
+
+                    if frame_id == "s":
+                        T = torch.inverse(inputs["stereo_T"])
+                    else:
+                        T = outputs[("cam_T_cam", frame_id, 0)]
+
+                    cam_points = self.backproject_depth[source_scale](
+                        depth, inputs[("inv_K", source_scale)])
+                    pix_coords = self.project_3d[source_scale](
+                        cam_points, inputs[("K", source_scale)], T)
+
+                    outputs[("sample", 0, frame_id, scale)] = pix_coords
+
+                    outputs[("color", 0, frame_id, scale)] = F.grid_sample(
+                        inputs[("color", 0, source_scale)],
+                        outputs[("sample", 0, frame_id, scale)],
+                        padding_mode="border", align_corners=True)
 
     def compute_reprojection_loss(self, pred, target):
         """Computes reprojection loss between a batch of predicted and target images
@@ -601,22 +654,24 @@ class Trainer:
             # test with stereo mode
             if self.opt.patchnce:
                 real_A = inputs[("color", 0, source_scale)]
-                real_B = inputs["color", "s", source_scale]
-                fake_A = outputs["color", "s", scale]
+                for i, frame_id in enumerate(self.opt.frame_ids[1:]):
+                    real_B = inputs[("color", frame_id, source_scale)]
 
-                if self.opt.lambda_NCE > 0.0:
-                    loss_NCE = self.calculate_NCE_loss(real_A, fake_A)
-                else:
-                    loss_NCE = 0.0, 0.0
+                    fake_A = outputs[("color", frame_id, scale)]
+                    fake_B = outputs[("color", 0, frame_id, scale)]
 
-                ## TODO: identity loss
-                if self.opt.nce_idt and self.opt.lambda_NCE > 0.0:
-                    loss_NCE_Y = self.calculate_NCE_loss(self.real_B, self.idt_B)
-                    loss_NCE_both = (loss_NCE + loss_NCE_Y) * 0.5
-                else:
-                    loss_NCE_both = loss_NCE
+                    if self.opt.lambda_NCE > 0.0:
+                        loss_NCE = self.calculate_NCE_loss(real_A, fake_A)
+                    else:
+                        loss_NCE = 0.0, 0.0
 
-                loss += loss_NCE_both
+                    if self.opt.nce_idt and self.opt.lambda_NCE > 0.0:
+                        loss_NCE_Y = self.calculate_NCE_loss(real_B, fake_B)
+                        loss_NCE_both = (loss_NCE + loss_NCE_Y) * 0.5
+                    else:
+                        loss_NCE_both = loss_NCE
+
+                    loss += loss_NCE_both
 
             total_loss += loss
             losses["loss/{}".format(scale)] = loss
