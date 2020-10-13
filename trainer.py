@@ -549,8 +549,8 @@ class Trainer:
 
         # PatchNCE for depth model
         # 5 layers
-        feat_q = self.models["encoder"](tgt)
-        feat_k = self.models["encoder"](src)
+        feat_q = self.models["encoder"](tgt)[-1:]
+        feat_k = self.models["encoder"](src)[-1:]
 
         feat_k_pool, sample_ids = self.patchSampler(feat_k, self.opt.num_patches, None)
         feat_q_pool, _ = self.patchSampler(feat_q, self.opt.num_patches, sample_ids)
@@ -654,6 +654,7 @@ class Trainer:
             # test with stereo mode
             if self.opt.patchnce:
                 real_A = inputs[("color", 0, source_scale)]
+                patchnce_losses = []
                 for i, frame_id in enumerate(self.opt.frame_ids[1:]):
                     real_B = inputs[("color", frame_id, source_scale)]
 
@@ -671,7 +672,10 @@ class Trainer:
                     else:
                         loss_NCE_both = loss_NCE
 
-                    loss += loss_NCE_both
+                    patchnce_losses.append(loss_NCE_both)
+
+                patchnce_losses = torch.tensor(patchnce_losses)
+                loss += torch.min(patchnce_losses)
 
             total_loss += loss
             losses["loss/{}".format(scale)] = loss
