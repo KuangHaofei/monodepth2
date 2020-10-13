@@ -259,7 +259,7 @@ class Normalize(nn.Module):
         out = x.div(norm + 1e-7)
         return out
 
-
+# TODO: PatchSampler on Depth Map
 class PatchSampleF(nn.Module):
     def __init__(self, use_mlp=False, init_type='normal', init_gain=0.02, nc=256, gpu_ids=[]):
         # potential issues: currently, we use the same patch_ids for multiple images in the batch
