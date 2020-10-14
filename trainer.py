@@ -654,7 +654,6 @@ class Trainer:
             # test with stereo mode
             if self.opt.patchnce:
                 real_A = inputs[("color", 0, source_scale)]
-                patchnce_losses = []
                 for i, frame_id in enumerate(self.opt.frame_ids[1:]):
                     real_B = inputs[("color", frame_id, source_scale)]
 
@@ -672,10 +671,7 @@ class Trainer:
                     else:
                         loss_NCE_both = loss_NCE
 
-                    patchnce_losses.append(loss_NCE_both)
-
-                patchnce_losses = torch.tensor(patchnce_losses)
-                loss += torch.min(patchnce_losses)
+                    loss += loss_NCE_both
 
             total_loss += loss
             losses["loss/{}".format(scale)] = loss
