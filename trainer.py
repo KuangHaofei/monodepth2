@@ -544,16 +544,18 @@ class Trainer:
 
         return reprojection_loss
 
-    def calculate_NCE_loss(self, src, tgt):
+    def calculate_NCE_loss(self, src, tgt, mask=None):
+        # src: real
+        # tgt: fake
         n_layers = len(self.nce_layers)
 
         # PatchNCE for depth model
         # 5 layers
-        feat_q = self.models["encoder"](tgt)[-1:]
-        feat_k = self.models["encoder"](src)[-1:]
+        feat_q = tgt
+        feat_k = src
 
-        feat_k_pool, sample_ids = self.patchSampler(feat_k, self.opt.num_patches, None)
-        feat_q_pool, _ = self.patchSampler(feat_q, self.opt.num_patches, sample_ids)
+        feat_k_pool, sample_ids = self.patchSampler(feat_k, self.opt.num_patches, None, mask)
+        feat_q_pool, _ = self.patchSampler(feat_q, self.opt.num_patches, sample_ids, mask)
 
         # TODO: PatchNCE for pose model
 
@@ -589,6 +591,15 @@ class Trainer:
                 reprojection_losses.append(self.compute_reprojection_loss(pred, target))
 
             reprojection_losses = torch.cat(reprojection_losses, 1)
+
+            if self.opt.patchnce and self.opt.nce_idt:
+                idt_reprojection_losses = []
+                for frame_id in self.opt.frame_ids[1:]:
+                    idt_pred = outputs[("color", 0, frame_id, scale)]
+                    idt_target = inputs[("color", frame_id, source_scale)]
+                    idt_reprojection_losses.append(self.compute_reprojection_loss(idt_pred, idt_target))
+
+                idt_reprojection_losses = torch.cat(idt_reprojection_losses, 1)
 
             if not self.opt.disable_automasking:
                 identity_reprojection_losses = []
@@ -629,6 +640,34 @@ class Trainer:
                 identity_reprojection_loss += torch.randn(
                     identity_reprojection_loss.shape).cuda() * 0.00001
 
+                if self.opt.patchnce:
+                    mask_loss = (identity_reprojection_loss - reprojection_loss).squeeze(dim=1)
+                    B, H, W = mask_loss.shape
+                    mask = []
+                    for batch in range(B):
+                        batch_loss = mask_loss[batch].flatten()
+                        values, indices = torch.topk(batch_loss, 1024)
+                        mask_batch = torch.zeros_like(batch_loss)
+                        mask_batch[indices] = 1
+                        mask_batch = mask_batch.view(1, H, W)
+
+                        mask.append(mask_batch)
+                    mask_nce = torch.cat(mask, dim=0)
+
+                    if self.opt.nce_idt:
+                        mask_loss = (identity_reprojection_loss - idt_reprojection_losses).squeeze(dim=1)
+                        B, H, W = mask_loss.shape
+                        mask = []
+                        for batch in range(B):
+                            batch_loss = mask_loss[batch].flatten()
+                            values, indices = torch.topk(batch_loss, 1024)
+                            mask_batch = torch.zeros_like(batch_loss)
+                            mask_batch[indices] = 1
+                            mask_batch = mask_batch.view(1, H, W)
+
+                            mask.append(mask_batch)
+                        mask_nce_idt = torch.cat(mask, dim=0)
+
                 combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
             else:
                 combined = reprojection_loss
@@ -653,20 +692,25 @@ class Trainer:
             # PatchNCE Loss
             # test with stereo mode
             if self.opt.patchnce:
-                real_A = inputs[("color", 0, source_scale)]
+                realdisp_A = [outputs["disp", source_scale]]
                 for i, frame_id in enumerate(self.opt.frame_ids[1:]):
-                    real_B = inputs[("color", frame_id, source_scale)]
+                    realdisp_B = [outputs["disp", frame_id, source_scale]]
 
                     fake_A = outputs[("color", frame_id, scale)]
+                    fakefeature_A = self.models["encoder"](fake_A)
+                    fakedisp_A = [self.models["depth"](fakefeature_A)[("disp", 0)]]
+
                     fake_B = outputs[("color", 0, frame_id, scale)]
+                    fakefeature_B = self.models["encoder"](fake_B)
+                    fakedisp_B = [self.models["depth"](fakefeature_B)[("disp", 0)]]
 
                     if self.opt.lambda_NCE > 0.0:
-                        loss_NCE = self.calculate_NCE_loss(real_A, fake_A)
+                        loss_NCE = self.calculate_NCE_loss(realdisp_A, fakedisp_A, mask_nce)
                     else:
                         loss_NCE = 0.0, 0.0
 
                     if self.opt.nce_idt and self.opt.lambda_NCE > 0.0:
-                        loss_NCE_Y = self.calculate_NCE_loss(real_B, fake_B)
+                        loss_NCE_Y = self.calculate_NCE_loss(realdisp_B, fakedisp_B, mask_nce_idt)
                         loss_NCE_both = (loss_NCE + loss_NCE_Y) * 0.5
                     else:
                         loss_NCE_both = loss_NCE

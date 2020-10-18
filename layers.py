@@ -106,6 +106,7 @@ def rot_from_axisangle(vec):
 class ConvBlock(nn.Module):
     """Layer to perform a convolution followed by ELU
     """
+
     def __init__(self, in_channels, out_channels):
         super(ConvBlock, self).__init__()
 
@@ -121,6 +122,7 @@ class ConvBlock(nn.Module):
 class Conv3x3(nn.Module):
     """Layer to pad and convolve input
     """
+
     def __init__(self, in_channels, out_channels, use_refl=True):
         super(Conv3x3, self).__init__()
 
@@ -139,6 +141,7 @@ class Conv3x3(nn.Module):
 class BackprojectDepth(nn.Module):
     """Layer to transform a depth image into a point cloud
     """
+
     def __init__(self, batch_size, height, width):
         super(BackprojectDepth, self).__init__()
 
@@ -171,6 +174,7 @@ class BackprojectDepth(nn.Module):
 class Project3D(nn.Module):
     """Layer which projects 3D points into a camera with intrinsics K and at position T
     """
+
     def __init__(self, batch_size, height, width, eps=1e-7):
         super(Project3D, self).__init__()
 
@@ -218,12 +222,13 @@ def get_smooth_loss(disp, img):
 class SSIM(nn.Module):
     """Layer to compute the SSIM loss between a pair of images
     """
+
     def __init__(self):
         super(SSIM, self).__init__()
-        self.mu_x_pool   = nn.AvgPool2d(3, 1)
-        self.mu_y_pool   = nn.AvgPool2d(3, 1)
-        self.sig_x_pool  = nn.AvgPool2d(3, 1)
-        self.sig_y_pool  = nn.AvgPool2d(3, 1)
+        self.mu_x_pool = nn.AvgPool2d(3, 1)
+        self.mu_y_pool = nn.AvgPool2d(3, 1)
+        self.sig_x_pool = nn.AvgPool2d(3, 1)
+        self.sig_y_pool = nn.AvgPool2d(3, 1)
         self.sig_xy_pool = nn.AvgPool2d(3, 1)
 
         self.refl = nn.ReflectionPad2d(1)
@@ -238,8 +243,8 @@ class SSIM(nn.Module):
         mu_x = self.mu_x_pool(x)
         mu_y = self.mu_y_pool(y)
 
-        sigma_x  = self.sig_x_pool(x ** 2) - mu_x ** 2
-        sigma_y  = self.sig_y_pool(y ** 2) - mu_y ** 2
+        sigma_x = self.sig_x_pool(x ** 2) - mu_x ** 2
+        sigma_y = self.sig_y_pool(y ** 2) - mu_y ** 2
         sigma_xy = self.sig_xy_pool(x * y) - mu_x * mu_y
 
         SSIM_n = (2 * mu_x * mu_y + self.C1) * (2 * sigma_xy + self.C2)
@@ -258,6 +263,7 @@ class Normalize(nn.Module):
         norm = x.pow(self.power).sum(1, keepdim=True).pow(1. / self.power)
         out = x.div(norm + 1e-7)
         return out
+
 
 # TODO: PatchSampler on Depth Map
 class PatchSampleF(nn.Module):
@@ -282,24 +288,46 @@ class PatchSampleF(nn.Module):
         init_net(self, self.init_type, self.init_gain, self.gpu_ids)
         self.mlp_init = True
 
-    def forward(self, feats, num_patches=64, patch_ids=None):
+    def forward(self, feats, num_patches=64, patch_ids=None, mask=None):
         return_ids = []
         return_feats = []
-        if self.use_mlp and not self.mlp_init:
-            self.create_mlp(feats)
+
+        # feats: list of depth map; size: B*1*H*W
+        depth_feats = []
         for feat_id, feat in enumerate(feats):
+            # sample patch
             B, H, W = feat.shape[0], feat.shape[2], feat.shape[3]
+            kernel_size = 15
+            unfold = nn.Unfold(kernel_size=kernel_size, padding=kernel_size // 2)
+            feat = unfold(feat).view(B, -1, H, W)
+            depth_feats.append(feat)
+
+        # create mlp
+        if self.use_mlp and not self.mlp_init:
+            self.create_mlp(depth_feats)
+
+        for feat_id, feat in enumerate(depth_feats):
+            # Patch filter
+            B, C, H, W = feat.shape
             feat_reshape = feat.permute(0, 2, 3, 1).flatten(1, 2)
+
+            # TODO: implement mask
+            if mask is not None:
+                idx = torch.nonzero(mask.flatten(1, 2))
+                feat_reshape = feat_reshape[idx[:, 0], idx[:, 1], :].view(B, -1, C)
+
             if num_patches > 0:
                 if patch_ids is not None:
                     patch_id = patch_ids[feat_id]
                 else:
                     patch_id = torch.randperm(feat_reshape.shape[1], device=feats[0].device)
                     patch_id = patch_id[:int(min(num_patches, patch_id.shape[0]))]  # .to(patch_ids.device)
+
                 x_sample = feat_reshape[:, patch_id, :].flatten(0, 1)  # reshape(-1, x.shape[1])
             else:
                 x_sample = feat_reshape
                 patch_id = []
+
             if self.use_mlp:
                 mlp = getattr(self, 'mlp_%d' % feat_id)
                 x_sample = mlp(x_sample)
@@ -309,6 +337,7 @@ class PatchSampleF(nn.Module):
             if num_patches == 0:
                 x_sample = x_sample.permute(0, 2, 1).reshape([B, x_sample.shape[-1], H, W])
             return_feats.append(x_sample)
+
         return return_feats, return_ids
 
 
@@ -323,7 +352,7 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[], debug=False, i
     Return an initialized network.
     """
     if len(gpu_ids) > 0:
-        assert(torch.cuda.is_available())
+        assert (torch.cuda.is_available())
         net.to(gpu_ids[0])
         # if not amp:
         # net = torch.nn.DataParallel(net, gpu_ids)  # multi-GPUs for non-AMP training
@@ -343,6 +372,7 @@ def init_weights(net, init_type='normal', init_gain=0.02, debug=False):
     We use 'normal' in the original pix2pix and CycleGAN paper. But xavier and kaiming might
     work better for some applications. Feel free to try yourself.
     """
+
     def init_func(m):  # define the initialization function
         classname = m.__class__.__name__
         if hasattr(m, 'weight') and (classname.find('Conv') != -1 or classname.find('Linear') != -1):
@@ -372,7 +402,7 @@ def compute_depth_errors(gt, pred):
     """Computation of error metrics between predicted and ground truth depths
     """
     thresh = torch.max((gt / pred), (pred / gt))
-    a1 = (thresh < 1.25     ).float().mean()
+    a1 = (thresh < 1.25).float().mean()
     a2 = (thresh < 1.25 ** 2).float().mean()
     a3 = (thresh < 1.25 ** 3).float().mean()
 
