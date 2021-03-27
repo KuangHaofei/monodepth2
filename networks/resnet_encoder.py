@@ -90,8 +90,10 @@ class ResnetEncoder(nn.Module):
             if pretrained_path is not None:
                 # check pretrained path is valid
                 assert os.path.isfile(pretrained_path), 'pretrained path is not a valid file, please check it!'
+                print("->loading self pretrained model...")
                 loaded = torch.load(pretrained_path)
                 self.encoder.load_state_dict(loaded)
+                print("->finished!")
 
         if num_layers > 34:
             self.num_ch_enc[1:] *= 4
