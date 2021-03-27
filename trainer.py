@@ -52,7 +52,8 @@ class Trainer:
             self.opt.frame_ids.append("s")
 
         self.models["encoder"] = networks.ResnetEncoder(
-            self.opt.num_layers, self.opt.weights_init == "pretrained")
+            self.opt.num_layers,
+            self.opt.weights_init == "pretrained", pretrained_path=self.opt.pretrained_path)
         self.models["encoder"].to(self.device)
         self.parameters_to_train += list(self.models["encoder"].parameters())
 
@@ -65,7 +66,7 @@ class Trainer:
             if self.opt.pose_model_type == "separate_resnet":
                 self.models["pose_encoder"] = networks.ResnetEncoder(
                     self.opt.num_layers,
-                    self.opt.weights_init == "pretrained",
+                    self.opt.weights_init == "pretrained", pretrained_path=self.opt.pretrained_path,
                     num_input_images=self.num_pose_frames)
 
                 self.models["pose_encoder"].to(self.device)
