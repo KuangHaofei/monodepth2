@@ -132,6 +132,9 @@ class MonodepthOptions:
                                  help="normal or shared",
                                  default="separate_resnet",
                                  choices=["posecnn", "separate_resnet", "shared"])
+        self.parser.add_argument("--pretrained_path",
+                                 type=str,
+                                 help="which self-pretrained encoder to use")
 
         # SYSTEM options
         self.parser.add_argument("--no_cuda",
